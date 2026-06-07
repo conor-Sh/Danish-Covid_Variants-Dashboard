@@ -17,7 +17,13 @@ GEOJSON_PATH = os.path.join(BASE_DIR, "..", "data", "processed", "dk.json")
 with open(GEOJSON_PATH, encoding="utf-8") as f:
     dk_geo = json.load(f)
 
-app = Dash(__name__)
+# external_stylesheets = ["https://codepen.io/chriddyp/pen/bWLwgP.css"]
+app = Dash(
+    __name__,
+    external_stylesheets=[
+        "https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    ],
+)
 server = app.server
 
 ##################### DATA #####################
@@ -36,43 +42,77 @@ mapping = {
     "syddanmark": "Syddanmark",
 }
 
+COLOR_MAP = {
+    "Alpha": "#1f77b4",
+    "D614G": "#ff7f0e",
+    "EU1": "#2ca02c",
+    "Mink-associated": "#d62728",
+    "Other": "#9467bd",
+}
+
 dominant["region_geo"] = dominant["region"].map(mapping)
 
-# Get unique months (first day of each month)
-monthly_dates = sorted(df["date"].dt.to_period("M").unique())
-monthly_dates = [p.to_timestamp() for p in monthly_dates]
+# Get every unique date in the dataset
+slider_dates = sorted(df["date"].unique())
 
 ##################### LAYOUT #####################
 
 app.layout = html.Div(
     [
-        html.H1("Danish COVID Variant Dashboard"),
-        dcc.Dropdown(
-            id="region_dropdown",
-            options=[
-                {"label": r.title(), "value": r} for r in sorted(df["region"].unique())
-            ],
-            value="copenhagen",
-            placeholder="Select a region",
-            clearable=False,
-            closeOnSelect=True,
+        html.H1(
+            "Danish COVID Variant Dashboard",
+            className="text-center my-4",
         ),
-        dcc.Slider(
-            id="date_slider",
-            min=0,
-            max=len(monthly_dates) - 1,
-            value=len(monthly_dates) - 1,  # <-- initialize slider
-            step=1,
-            marks={
-                0: monthly_dates[0].strftime("%Y-%m"),
-                len(monthly_dates) - 1: monthly_dates[-1].strftime("%Y-%m"),
-            },
-            tooltip={"placement": "bottom", "always_visible": True},
-            updatemode="drag",
+        html.Div(
+            dcc.Dropdown(
+                id="region_dropdown",
+                options=[
+                    {
+                        "label": r.title(),
+                        "value": r,
+                    }
+                    for r in sorted(df["region"].unique())
+                ],
+                value="copenhagen",
+                clearable=False,
+            ),
+            className="mb-4",
         ),
-        dcc.Graph(id="map"),
-        dcc.Graph(id="stacked_area_graph"),
-    ]
+        html.Div(
+            dcc.Slider(
+                id="date_slider",
+                min=1,
+                max=len(slider_dates) - 1,
+                value=0,
+                step=1,
+                marks={
+                    0: slider_dates[0].strftime("%Y-%m-%d"),
+                    len(slider_dates) - 1: slider_dates[-1].strftime("%Y-%m-%d"),
+                },
+                tooltip={
+                    "placement": "top",
+                    "always_visible": True,
+                },
+                updatemode="drag",
+                allow_direct_input=False,
+            ),
+            className="mb-4",
+        ),
+        html.Div(
+            dcc.Graph(
+                id="map",
+                style={"height": "500px"},
+            ),
+            className="mb-4",
+        ),
+        html.Div(
+            dcc.Graph(
+                id="stacked_area_graph",
+                style={"height": "500px"},
+            ),
+        ),
+    ],
+    className="container py-4",
 )
 
 ##################### CHOROPLETH #####################
@@ -85,6 +125,7 @@ def make_map(df_subset):
         locations="region_geo",
         featureidkey="properties.name",
         color="variant_group",
+        color_discrete_map=COLOR_MAP,
     )
     fig.update_geos(fitbounds="locations", visible=False)
     return fig
@@ -98,11 +139,9 @@ def update_map(slider_value):
     if slider_value is None:
         return dash.no_update
 
-    selected_date = monthly_dates[slider_value]
+    selected_date = slider_dates[slider_value]
 
-    df_subset = dominant[
-        dominant["date"].dt.to_period("M") == selected_date.to_period("M")
-    ]
+    df_subset = dominant[dominant["date"] == selected_date]
 
     return make_map(df_subset)
 
@@ -119,7 +158,8 @@ def update_stacked(region_value, slider_value):
     if slider_value is None:
         return dash.no_update
 
-    selected_date = monthly_dates[slider_value]
+    # Slider position corresponds to a month
+    selected_date = slider_dates[slider_value]
 
     # Filter selected region
     df_region = df[df["region"] == region_value]
@@ -129,10 +169,9 @@ def update_stacked(region_value, slider_value):
     first_real = df_region.loc[mask, "date"].min()
     last_real = df_region.loc[mask, "date"].max()
 
-    # Find the last actual observation on or before the selected month
+    # Find the last observation within the selected month or earlier
     actual_end = df_region.loc[df_region["date"] <= selected_date, "date"].max()
 
-    # If there is no data yet, use the first available point
     if pd.isna(actual_end):
         actual_end = first_real
 
@@ -166,6 +205,7 @@ def update_stacked(region_value, slider_value):
         y="pct",
         color="variant_group",
         groupnorm="fraction",
+        color_discrete_map=COLOR_MAP,
     )
 
     # Fixed left edge, moving right edge
@@ -204,30 +244,6 @@ def debug_all():
     print("dominant['region_geo'] unique values:")
     print(sorted(dominant["region_geo"].unique()))
     print()
-
-    print("Monthly dates:")
-    print(monthly_dates)
-    print()
-
-    first_date = monthly_dates[0]
-
-    dom_subset = dominant[
-        dominant["date"].dt.to_period("M") == first_date.to_period("M")
-    ]
-
-    print(f"Dominant subset for {first_date.strftime('%Y-%m')}:")
-    print(dom_subset)
-    print(f"Rows: {len(dom_subset)}")
-    print()
-
-    df_subset = df[df["date"].dt.to_period("M") == first_date.to_period("M")]
-
-    print(f"Raw df subset for {first_date.strftime('%Y-%m')}:")
-    print(df_subset.head())
-    print(f"Rows: {len(df_subset)}")
-    print()
-
-    print("================ DEBUG END ================\n")
 
 
 # Run diagnostics on startup
