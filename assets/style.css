@@ -1,0 +1,40 @@
+/* Whole page */
+body {
+    margin: 0;
+    background-color: #f5f5f5;
+    font-family: Arial, sans-serif;
+}
+
+/* Main content */
+.container {
+    width: 90%;
+    max-width: 1400px;
+    margin: 30px auto;
+}
+
+/* Title */
+h1 {
+    text-align: center;
+    margin-bottom: 40px;
+}
+
+/* Dropdown */
+.Select-control {
+    border-radius: 8px;
+}
+
+/* Slider */
+.rc-slider {
+    margin-top: 25px;
+    margin-bottom: 40px;
+}
+
+/* Graph containers */
+.js-plotly-plot {
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    background: white;
+    padding: 10px;
+    margin-bottom: 30px;
+}
+
