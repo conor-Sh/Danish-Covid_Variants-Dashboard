@@ -1,0 +1,239 @@
+from dash import Dash, dcc, html, Input, Output
+import dash
+import plotly.express as px
+import pandas as pd
+import json
+import os
+
+##################### SETUP #####################
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CSV_PATH = os.path.join(BASE_DIR, "..", "data", "processed", "processed.csv")
+
+df = pd.read_csv(CSV_PATH, parse_dates=["date"])
+df = df[df["region"] != "whole_denmark"]
+
+GEOJSON_PATH = os.path.join(BASE_DIR, "..", "data", "processed", "dk.json")
+with open(GEOJSON_PATH, encoding="utf-8") as f:
+    dk_geo = json.load(f)
+
+app = Dash(__name__)
+server = app.server
+
+##################### DATA #####################
+
+dominant = df.loc[df.groupby(["region", "date"])["pct"].idxmax()][
+    ["region", "date", "variant_group"]
+]
+
+dominant = dominant[dominant["region"] != "whole_denmark"]
+
+mapping = {
+    "copenhagen": "Hovedstaden",
+    "sjælland": "Sjælland",
+    "nordjylland": "Nordjylland",
+    "midtjylland": "Midtjylland",
+    "syddanmark": "Syddanmark",
+}
+
+dominant["region_geo"] = dominant["region"].map(mapping)
+
+# Get unique months (first day of each month)
+monthly_dates = sorted(df["date"].dt.to_period("M").unique())
+monthly_dates = [p.to_timestamp() for p in monthly_dates]
+
+##################### LAYOUT #####################
+
+app.layout = html.Div(
+    [
+        html.H1("Danish COVID Variant Dashboard"),
+        dcc.Dropdown(
+            id="region_dropdown",
+            options=[
+                {"label": r.title(), "value": r} for r in sorted(df["region"].unique())
+            ],
+            value="copenhagen",
+            placeholder="Select a region",
+            clearable=False,
+            closeOnSelect=True,
+        ),
+        dcc.Slider(
+            id="date_slider",
+            min=0,
+            max=len(monthly_dates) - 1,
+            value=len(monthly_dates) - 1,  # <-- initialize slider
+            step=1,
+            marks={
+                0: monthly_dates[0].strftime("%Y-%m"),
+                len(monthly_dates) - 1: monthly_dates[-1].strftime("%Y-%m"),
+            },
+            tooltip={"placement": "bottom", "always_visible": True},
+            updatemode="drag",
+        ),
+        dcc.Graph(id="map"),
+        dcc.Graph(id="stacked_area_graph"),
+    ]
+)
+
+##################### CHOROPLETH #####################
+
+
+def make_map(df_subset):
+    fig = px.choropleth(
+        df_subset,
+        geojson=dk_geo,
+        locations="region_geo",
+        featureidkey="properties.name",
+        color="variant_group",
+    )
+    fig.update_geos(fitbounds="locations", visible=False)
+    return fig
+
+
+@app.callback(
+    Output("map", "figure"),
+    Input("date_slider", "value"),
+)
+def update_map(slider_value):
+    if slider_value is None:
+        return dash.no_update
+
+    selected_date = monthly_dates[slider_value]
+
+    df_subset = dominant[
+        dominant["date"].dt.to_period("M") == selected_date.to_period("M")
+    ]
+
+    return make_map(df_subset)
+
+
+##################### STACKED AREA #####################
+
+
+@app.callback(
+    Output("stacked_area_graph", "figure"),
+    Input("region_dropdown", "value"),
+    Input("date_slider", "value"),
+)
+def update_stacked(region_value, slider_value):
+    if slider_value is None:
+        return dash.no_update
+
+    selected_date = monthly_dates[slider_value]
+
+    # Filter selected region
+    df_region = df[df["region"] == region_value]
+
+    # Find range where real data exists
+    mask = df_region["positive"] > 0
+    first_real = df_region.loc[mask, "date"].min()
+    last_real = df_region.loc[mask, "date"].max()
+
+    # Find the last actual observation on or before the selected month
+    actual_end = df_region.loc[df_region["date"] <= selected_date, "date"].max()
+
+    # If there is no data yet, use the first available point
+    if pd.isna(actual_end):
+        actual_end = first_real
+
+    # Build counts table
+    counts = (
+        df_region.groupby(["date", "variant_group"])["positive"]
+        .sum()
+        .unstack(fill_value=0)
+    )
+
+    # Normalize to proportions
+    pivot = counts.div(counts.sum(axis=1), axis=0)
+
+    # Keep only real data range
+    pivot = pivot.loc[first_real:last_real]
+
+    # Convert back to long format
+    df_long = pivot.reset_index().melt(
+        id_vars="date",
+        var_name="variant_group",
+        value_name="pct",
+    )
+
+    # Only include data up to slider date
+    df_long = df_long[df_long["date"] <= actual_end]
+
+    # Plot
+    fig = px.area(
+        df_long,
+        x="date",
+        y="pct",
+        color="variant_group",
+        groupnorm="fraction",
+    )
+
+    # Fixed left edge, moving right edge
+    fig.update_xaxes(range=[first_real, actual_end])
+
+    fig.update_yaxes(range=[0, 1])
+
+    return fig
+
+
+##################### DEBUG #####################
+
+
+def debug_all():
+    print("\n================ DEBUG START ================\n")
+
+    print("CSV regions:")
+    print(sorted(df["region"].unique()))
+    print()
+
+    print("GeoJSON regions:")
+    geo_regions = [f["properties"]["name"] for f in dk_geo["features"]]
+    print(sorted(geo_regions))
+    print()
+
+    print("Mapping keys vs CSV keys:")
+    print("Mapping keys:", sorted(mapping.keys()))
+    print("CSV keys:    ", sorted(df["region"].unique()))
+    print()
+
+    print("Mapping values vs GeoJSON names:")
+    print("Mapping values:", sorted(mapping.values()))
+    print("GeoJSON names: ", sorted(geo_regions))
+    print()
+
+    print("dominant['region_geo'] unique values:")
+    print(sorted(dominant["region_geo"].unique()))
+    print()
+
+    print("Monthly dates:")
+    print(monthly_dates)
+    print()
+
+    first_date = monthly_dates[0]
+
+    dom_subset = dominant[
+        dominant["date"].dt.to_period("M") == first_date.to_period("M")
+    ]
+
+    print(f"Dominant subset for {first_date.strftime('%Y-%m')}:")
+    print(dom_subset)
+    print(f"Rows: {len(dom_subset)}")
+    print()
+
+    df_subset = df[df["date"].dt.to_period("M") == first_date.to_period("M")]
+
+    print(f"Raw df subset for {first_date.strftime('%Y-%m')}:")
+    print(df_subset.head())
+    print(f"Rows: {len(df_subset)}")
+    print()
+
+    print("================ DEBUG END ================\n")
+
+
+# Run diagnostics on startup
+debug_all()
+
+##################### RUN #####################
+
+if __name__ == "__main__":
+    app.run(debug=False)
