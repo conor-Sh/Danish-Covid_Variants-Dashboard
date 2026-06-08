@@ -4,6 +4,8 @@ import plotly.express as px
 import pandas as pd
 import json
 import os
+import dash_bootstrap_components as dbc
+from dash_bootstrap_templates import load_figure_template
 
 ##################### SETUP #####################
 
@@ -17,13 +19,12 @@ GEOJSON_PATH = os.path.join(BASE_DIR, "..", "data", "processed", "dk.json")
 with open(GEOJSON_PATH, encoding="utf-8") as f:
     dk_geo = json.load(f)
 
-# external_stylesheets = ["https://codepen.io/chriddyp/pen/bWLwgP.css"]
 app = Dash(
     __name__,
-    external_stylesheets=[
-        "https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-    ],
+    external_stylesheets=[dbc.themes.MATERIA],
 )
+load_figure_template("MATERIA")
+
 server = app.server
 
 ##################### DATA #####################
@@ -57,63 +58,123 @@ slider_dates = sorted(df["date"].unique())
 
 ##################### LAYOUT #####################
 
-app.layout = html.Div(
+app.layout = dbc.Container(
     [
-        html.H1(
-            "Danish COVID Variant Dashboard",
-            className="text-center my-4",
+        # ---------- Title ----------
+        dbc.Row(
+            dbc.Col(
+                html.H1(
+                    "Danish COVID Variant Dashboard",
+                    className="text-center my-4",
+                )
+            )
         ),
-        html.Div(
-            dcc.Dropdown(
-                id="region_dropdown",
-                options=[
-                    {
-                        "label": r.title(),
-                        "value": r,
-                    }
-                    for r in sorted(df["region"].unique())
-                ],
-                value="copenhagen",
-                clearable=False,
-            ),
-            className="mb-4",
-        ),
-        html.Div(
-            dcc.Slider(
-                id="date_slider",
-                min=1,
-                max=len(slider_dates) - 1,
-                value=0,
-                step=1,
-                marks={
-                    0: slider_dates[0].strftime("%Y-%m-%d"),
-                    len(slider_dates) - 1: slider_dates[-1].strftime("%Y-%m-%d"),
-                },
-                tooltip={
-                    "placement": "top",
-                    "always_visible": True,
-                },
-                updatemode="drag",
-                allow_direct_input=False,
-            ),
-            className="mb-4",
-        ),
-        html.Div(
-            dcc.Graph(
-                id="map",
-                style={"height": "500px"},
-            ),
-            className="mb-4",
-        ),
-        html.Div(
-            dcc.Graph(
-                id="stacked_area_graph",
-                style={"height": "500px"},
-            ),
+        # ---------- Sidebar + Graphs ----------
+        dbc.Row(
+            [
+                # ---------- Sidebar ----------
+                dbc.Col(
+                    html.Div(
+                        [
+                            html.H4("Controls", className="mb-4"),
+                            html.Label("Region"),
+                            dcc.Dropdown(
+                                id="region_dropdown",
+                                options=[
+                                    {
+                                        "label": r.title(),
+                                        "value": r,
+                                    }
+                                    for r in sorted(df["region"].unique())
+                                ],
+                                value="copenhagen",
+                                clearable=False,
+                            ),
+                            html.Br(),
+                            html.Label("Selected date"),
+                            html.Div(
+                                id="selected-date",
+                                className="fw-bold mb-3",
+                            ),
+                            dcc.Slider(
+                                id="date_slider",
+                                min=0,
+                                max=len(slider_dates) - 1,
+                                value=0,
+                                step=1,
+                                marks={
+                                    0: slider_dates[0].strftime("%Y-%m-%d"),
+                                    len(slider_dates)
+                                    - 1: slider_dates[-1].strftime("%Y-%m-%d"),
+                                },
+                                tooltip={
+                                    "always_visible": False,
+                                },
+                                updatemode="drag",
+                                allow_direct_input=False,
+                            ),
+                        ],
+                        style={
+                            "backgroundColor": "#f8f9fa",
+                            "padding": "20px",
+                            "borderRadius": "10px",
+                            "boxShadow": "0 2px 6px rgba(0,0,0,0.15)",
+                            "height": "100%",
+                        },
+                    ),
+                    width=3,
+                ),
+                # ---------- Right side ----------
+                dbc.Col(
+                    [
+                        # Top row: map + stacked area
+                        dbc.Row(
+                            [
+                                dbc.Col(
+                                    dcc.Graph(
+                                        id="map",
+                                        style={"height": "500px"},
+                                    ),
+                                    width=6,
+                                ),
+                                dbc.Col(
+                                    dcc.Graph(
+                                        id="stacked_area_graph",
+                                        style={"height": "500px"},
+                                    ),
+                                    width=6,
+                                ),
+                            ]
+                        ),
+                        dbc.Row(
+                            dbc.Col(
+                                dcc.Graph(
+                                    id="line_graph",
+                                    style={"height": "600px"},
+                                ),
+                                width=12,
+                            ),
+                            className="mt-0",
+                        ),
+                    ],
+                    width=9,
+                ),
+            ]
         ),
     ],
-    className="container py-4",
+    fluid=True,
 )
+
+##################### SLIDER CALLBACK  #####################
+
+
+@app.callback(
+    Output("selected-date", "children"),
+    Input("date_slider", "value"),
+)
+def update_selected_date(slider_value):
+    return slider_dates[slider_value].strftime("%Y-%m-%d")
+
 
 ##################### CHOROPLETH #####################
 
@@ -127,7 +188,18 @@ def make_map(df_subset):
         color="variant_group",
         color_discrete_map=COLOR_MAP,
     )
+
     fig.update_geos(fitbounds="locations", visible=False)
+
+    fig.update_layout(
+        margin=dict(
+            l=5,
+            r=5,
+            t=10,
+            b=5,
+        )
+    )
+
     return fig
 
 
@@ -213,7 +285,19 @@ def update_stacked(region_value, slider_value):
 
     fig.update_yaxes(range=[0, 1])
 
+    fig.update_layout(
+        margin=dict(
+            l=5,
+            r=5,
+            t=5,
+            b=5,
+        )
+    )
+
     return fig
+
+
+##################### LINE GRAPH #####################
 
 
 ##################### DEBUG #####################
